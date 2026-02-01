@@ -103,7 +103,7 @@ class C4DSocketServer(threading.Thread):
                 timeout = 30  # 30 seconds for field operations
                 self.log(f"[C4D] Using extended timeout (30s) for field operation")
             else:
-                timeout = 15  # Default timeout increased to 15 seconds
+                timeout = 60  # Default timeout increased to 60 seconds
 
         self.log(f"[C4D] Main thread execution will timeout after {timeout}s")
 

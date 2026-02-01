@@ -10,8 +10,6 @@ from typing import Any, Dict, List, Optional, Union
 from contextlib import asynccontextmanager
 
 from mcp.server.fastmcp import FastMCP, Context
-from starlette.routing import Route
-from starlette.responses import JSONResponse
 
 from .config import C4D_HOST, C4D_PORT
 from .utils import logger, check_c4d_connection
@@ -142,22 +140,8 @@ def send_to_c4d(connection: C4DConnection, command: Dict[str, Any]) -> Dict[str,
         logger.error(f"Communication error during {command_type}: {str(e)}")
         return {"error": f"Communication error: {str(e)}"}
 
-
-async def homepage(request):
-    """Handle homepage requests to check if server is running."""
-    c4d_available = check_c4d_connection(C4D_HOST, C4D_PORT)
-    return JSONResponse(
-        {
-            "status": "ok",
-            "cinema4d_connected": c4d_available,
-            "host": C4D_HOST,
-            "port": C4D_PORT,
-        }
-    )
-
-
 # Initialize our FastMCP server
-mcp = FastMCP(title="Cinema4D", routes=[Route("/", endpoint=homepage)])
+mcp = FastMCP(name="Cinema4D")
 
 
 @mcp.tool()
@@ -903,8 +887,23 @@ async def execute_python_script(script: str, ctx: Context) -> str:
         if "error" in response:
             return f"❌ Error: {response['error']}"
 
-        result = response.get("result", "No output")
-        return response
+        # Format response as string for MCP validation
+        output = response.get("output", "")
+        variables = response.get("variables", {})
+        warning = response.get("warning", "")
+
+        result_parts = []
+        if response.get("success"):
+            result_parts.append("✅ Script executed successfully")
+        if output:
+            result_parts.append(f"\n**Output:**\n```\n{output}\n```")
+        if variables:
+            vars_str = "\n".join(f"  {k}: {v}" for k, v in variables.items())
+            result_parts.append(f"\n**Variables:**\n{vars_str}")
+        if warning:
+            result_parts.append(f"\n⚠️ {warning}")
+
+        return "".join(result_parts) if result_parts else "Script executed (no output)"
 
 
 @mcp.tool()
@@ -942,7 +941,9 @@ async def group_objects(
             # Truncate if too long
             objects_str = objects_str[:47] + "..."
 
-        return response
+        # Return formatted string for MCP validation
+        group_name_result = group_info.get("name", group_name or "Group")
+        return f"✅ Grouped {len(object_names)} objects ({objects_str}) under '{group_name_result}'"
 
 
 @mcp.tool()
