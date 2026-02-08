@@ -13,6 +13,7 @@ Cinema4D MCP Server connects Cinema 4D to Claude, enabling prompt-assisted 3D ma
 - [Troubleshooting & Debugging](#troubleshooting--debugging)
 - [File Structure](#file-structure)
 - [Tool Commands](#tool-commands)
+- [Usage Guide](docs/USAGE_GUIDE.md) — practical tips, extraction patterns, and known issues
 
 ## Components
 

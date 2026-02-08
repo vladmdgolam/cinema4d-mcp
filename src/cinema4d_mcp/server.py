@@ -53,8 +53,14 @@ def send_to_c4d(connection: C4DConnection, command: Dict[str, Any]) -> Dict[str,
     command_type = command.get("command", "")
 
     # Long-running operations need longer timeouts
-    if command_type in ["render_frame", "apply_mograph_fields"]:
-        timeout = 120  # 2 minutes for render operations
+    if command_type in [
+        "render_frame",
+        "render_preview",
+        "snapshot_scene",
+        "apply_mograph_fields",
+        "execute_python",
+    ]:
+        timeout = 120  # 2 minutes for render and heavy script operations
         logger.info(f"Using extended timeout ({timeout}s) for {command_type}")
     else:
         timeout = 20  # Default timeout for regular operations
@@ -74,7 +80,13 @@ def send_to_c4d(connection: C4DConnection, command: Dict[str, Any]) -> Dict[str,
         max_time = start_time + timeout
 
         # Log for long-running operations
-        if command_type in ["render_frame", "apply_mograph_fields"]:
+        if command_type in [
+            "render_frame",
+            "render_preview",
+            "snapshot_scene",
+            "apply_mograph_fields",
+            "execute_python",
+        ]:
             logger.info(
                 f"Waiting for response from {command_type} (timeout: {timeout}s)"
             )
@@ -98,7 +110,14 @@ def send_to_c4d(connection: C4DConnection, command: Dict[str, Any]) -> Dict[str,
                 # For long operations, log progress on data receipt
                 elapsed = time.time() - start_time
                 if (
-                    command_type in ["render_frame", "apply_mograph_fields"]
+                    command_type
+                    in [
+                        "render_frame",
+                        "render_preview",
+                        "snapshot_scene",
+                        "apply_mograph_fields",
+                        "execute_python",
+                    ]
                     and elapsed > 5
                 ):
                     logger.debug(
@@ -493,7 +512,11 @@ async def modify_object(
 
 @mcp.tool()
 async def list_objects(ctx: Context) -> str:
-    """List all objects in the current Cinema 4D scene."""
+    """List all objects in the current Cinema 4D scene.
+
+    If this tool returns a validation error, use execute_python_script as a fallback
+    to traverse the object hierarchy manually via the c4d API.
+    """
     async with c4d_connection_context() as connection:
         if not connection.connected:
             return "❌ Not connected to Cinema 4D"
@@ -995,10 +1018,27 @@ async def animate_camera(
 @mcp.tool()
 async def execute_python_script(script: str, ctx: Context) -> str:
     """
-    Execute a Python script in Cinema 4D.
+    Execute a Python script in Cinema 4D's Python environment.
+
+    This is the most reliable tool for non-trivial operations — it gives full access
+    to the c4d API and avoids wrapper/schema mismatches that can affect other tools.
 
     Args:
-        script: Python code to execute in Cinema 4D
+        script: Python code to execute in Cinema 4D. Has access to `c4d` and
+            `c4d.modules.mograph` modules.
+
+    Important usage notes:
+        - For animated/MoGraph data, always call doc.ExecutePasses() after SetTime():
+            doc.SetTime(c4d.BaseTime(frame, fps))
+            doc.ExecutePasses(None, True, True, True, c4d.BUILDFLAGS_NONE)
+        - For MoGraph/effector data, iterate frames sequentially (0..N) rather than
+          jumping directly to a later frame — sequential stepping produces more
+          faithful results.
+        - Security restrictions block certain keywords: import os, subprocess, exec(, eval(.
+          Keep scripts within the c4d API surface.
+        - For heavy operations (dense frame loops, complex MoGraph scenes), split work
+          into multiple smaller scripts rather than one large monolith.
+        - Use print() to return results — output is captured and returned.
     """
     async with c4d_connection_context() as connection:
         if not connection.connected:
