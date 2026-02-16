@@ -2,11 +2,10 @@
 
 import socket
 import json
-import os
 import math
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 from contextlib import asynccontextmanager
 
 from mcp.server.fastmcp import FastMCP, Context
@@ -357,9 +356,15 @@ def format_c4d_response(response: Dict[str, Any], command_type: str) -> str:
         return "\n".join(lines)
 
     elif command_type == "render_preview":
-        # Return the raw dict so MCP can handle image data,
-        # but add a formatted text summary
-        return response
+        if "image_data" not in response:
+            return "❌ No image data returned from Cinema 4D"
+        w = response.get("width", "?")
+        h = response.get("height", "?")
+        fmt = response.get("format", "png")
+        lines = [f"✅ Preview rendered ({w}×{h}, {fmt})"]
+        # Embed as base64 markdown image so Claude Code can display it
+        lines.append(f"![preview](data:image/{fmt};base64,{response['image_data']})")
+        return "\n".join(lines)
 
     elif command_type == "snapshot_scene":
         snap = response.get("snapshot", {})
@@ -387,19 +392,6 @@ def format_c4d_response(response: Dict[str, Any], command_type: str) -> str:
         else:
             lines.append(f"  - **{k.replace('_', ' ').title()}**: {v}")
     return "\n".join(lines)
-
-
-async def homepage(request):
-    """Handle homepage requests to check if server is running."""
-    c4d_available = check_c4d_connection(C4D_HOST, C4D_PORT)
-    return JSONResponse(
-        {
-            "status": "ok",
-            "cinema4d_connected": c4d_available,
-            "host": C4D_HOST,
-            "port": C4D_PORT,
-        }
-    )
 
 
 # Initialize our FastMCP server
