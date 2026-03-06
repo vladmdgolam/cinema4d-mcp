@@ -9,6 +9,7 @@ Cinema4D MCP Server connects Cinema 4D to Claude, enabling prompt-assisted 3D ma
 - [Installation](#installation)
 - [Setup](#setup)
 - [Usage](#usage)
+- [Agent Skill](#agent-skill)
 - [Development](#development)
 - [Troubleshooting & Debugging](#troubleshooting--debugging)
 - [File Structure](#file-structure)
@@ -107,6 +108,17 @@ To configure Claude Desktop, you need to modify its configuration file:
 1. Ensure the Cinema 4D Socket Server is running.
 2. Open Claude Desktop and look for the hammer icon 🔨 in the input box, indicating MCP tools are available.
 3. Use the available [Tool Commands](#tool-commands) to interact with Cinema 4D through Claude.
+
+## Agent Skill
+
+If you use agent skills, the maintained companion skill for this MCP lives in [vladmdgolam/agent-skills](https://github.com/vladmdgolam/agent-skills/tree/main/skills/cinema4d-mcp).
+
+The skill captures production-oriented guidance that sits on top of the raw MCP tools, including:
+
+- when to prefer `inspect_redshift_materials` over ad-hoc Python for Redshift inspection
+- when to fall back to `execute_python_script` for full C4D API access
+- current Redshift limits when the runtime or node space is unavailable
+- practical MoGraph extraction and debugging workflows
 
 ## Testing
 
@@ -230,7 +242,7 @@ cinema4d-mcp/
 
 ### Redshift Support
 
-- `inspect_redshift_materials`: Read-only Redshift inspector with fallbacks for assignments, preview colors, readable params, and best-effort graph access. ✅
+- `inspect_redshift_materials`: Read-only Redshift inspector with fallbacks for assignments, preview colors, readable params, and a renderEngine-style node-material probe (`GetNodeMaterialReference`, `GetNimbusRef`, candidate node spaces). ✅
 - `validate_redshift_materials`: Check Redshift material setup and connections. ✅ ⚠️ (Redshift materials not fully implemented)
 
 ### MoGraph & Fields

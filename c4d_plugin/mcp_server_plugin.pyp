@@ -5325,11 +5325,66 @@ class C4DSocketServer(threading.Thread):
 
         return {"entries": entries}
 
+    def _summarize_graph_nodes(self, graph, max_nodes=25):
+        """Return a compact summary of graph nodes when a node graph is available."""
+        try:
+            import maxon
+        except Exception:
+            maxon = None
+
+        node_entries = []
+        for index, node in enumerate(graph.GetNodes()):
+            if index >= max_nodes:
+                break
+
+            entry = {"id": str(node.GetId())}
+
+            try:
+                entry["kind"] = str(node.GetKind())
+            except Exception:
+                pass
+
+            if maxon is not None:
+                try:
+                    asset_id_value = node.GetValue("net.maxon.node.attribute.assetid")
+                    if asset_id_value:
+                        asset_id = str(asset_id_value)
+                        if asset_id.startswith("(") and "," in asset_id:
+                            asset_id = asset_id[1:].split(",", 1)[0]
+                        entry["asset_id"] = asset_id
+                except Exception:
+                    pass
+
+                try:
+                    node_name = node.GetValue(maxon.NODE.BASE.NAME)
+                    if node_name is None:
+                        node_name = node.GetValue(maxon.EffectiveName)
+                    if node_name:
+                        entry["name"] = str(node_name)
+                except Exception:
+                    pass
+
+            try:
+                entry["input_count"] = len(node.GetInputs())
+            except Exception:
+                pass
+
+            try:
+                entry["output_count"] = len(node.GetOutputs())
+            except Exception:
+                pass
+
+            node_entries.append(entry)
+
+        return node_entries
+
     def _inspect_redshift_graph(self, mat):
-        """Try to inspect the Redshift node graph when C4D exposes it."""
+        """Try to inspect the Redshift node graph using renderEngine-style probes."""
         graph_info = {
             "accessible": False,
             "candidate_spaces": [],
+            "probe_strategy": "renderengine-style-node-material-reference",
+            "shader_network_type_match": bool(mat.CheckType(1036224)),
         }
 
         try:
@@ -5338,70 +5393,117 @@ class C4DSocketServer(threading.Thread):
             graph_info["reason"] = f"maxon import failed: {exc}"
             return graph_info
 
+        active_space = None
         try:
-            node_material = c4d.NodeMaterial(mat)
-        except Exception as exc:
-            graph_info["reason"] = f"NodeMaterial wrapper failed: {exc}"
-            return graph_info
-
-        try:
-            graph_info["is_node_based"] = bool(node_material.IsNodeBased())
+            active_space = c4d.GetActiveNodeSpaceId()
         except Exception:
-            pass
+            active_space = None
 
+        if active_space:
+            graph_info["active_node_space"] = str(active_space)
+
+        node_material_ref = None
         try:
-            graph_info["nimbus_ref_count"] = len(node_material.GetAllNimbusRefs())
+            node_material_ref = mat.GetNodeMaterialReference()
         except Exception as exc:
-            graph_info["nimbus_refs_error"] = str(exc)
+            graph_info["node_material_reference_error"] = str(exc)
 
-        candidate_space_ids = [
+        if node_material_ref is not None:
+            graph_info["node_material_reference"] = repr(node_material_ref)
+
+            for attr_name, key_name in [
+                ("IsNodeBased", "is_node_based"),
+                ("GetAllNimbusRefs", "nimbus_ref_count"),
+            ]:
+                try:
+                    attr = getattr(node_material_ref, attr_name)
+                    value = attr()
+                    if key_name == "nimbus_ref_count":
+                        value = len(value)
+                    graph_info[key_name] = value
+                except Exception:
+                    pass
+
+        wrapper_node_material = None
+        try:
+            wrapper_node_material = c4d.NodeMaterial(mat)
+            graph_info["node_material_wrapper"] = repr(wrapper_node_material)
+        except Exception as exc:
+            graph_info["node_material_wrapper_error"] = str(exc)
+
+        candidate_space_ids = []
+        for raw_space in [
+            active_space,
             "com.redshift3d.redshift4c4d.class.nodespace",
             "com.redshift3d.redshift.class.nodespace",
             "net.maxon.nodespace.standard",
-        ]
+        ]:
+            if raw_space is None:
+                continue
+            space_id = str(raw_space)
+            if space_id and space_id not in candidate_space_ids:
+                candidate_space_ids.append(space_id)
 
         for space_id in candidate_space_ids:
             candidate = {"id": space_id}
             try:
-                space = maxon.Id(space_id)
-                candidate["has_space"] = bool(node_material.HasSpace(space))
-
-                if not candidate["has_space"]:
-                    graph_info["candidate_spaces"].append(candidate)
-                    continue
-
-                graph = node_material.GetGraph(space)
-                if graph is None:
-                    candidate["error"] = "GetGraph returned None"
-                    graph_info["candidate_spaces"].append(candidate)
-                    continue
-
-                root = graph.GetRoot()
-                nodes = []
-                for node in graph.GetNodes():
-                    node_entry = {"id": str(node.GetId())}
-                    try:
-                        node_entry["input_count"] = len(node.GetInputs())
-                    except Exception:
-                        pass
-                    try:
-                        node_entry["output_count"] = len(node.GetOutputs())
-                    except Exception:
-                        pass
-                    nodes.append(node_entry)
-
-                candidate["node_count"] = len(nodes)
-                candidate["nodes"] = nodes[:25]
-                candidate["root"] = repr(root) if root else None
-                graph_info["candidate_spaces"].append(candidate)
-                graph_info["accessible"] = True
-                graph_info["selected_space"] = space_id
-                graph_info["node_count"] = len(nodes)
-                graph_info["nodes"] = nodes[:25]
-                return graph_info
+                maxon_space = maxon.Id(space_id)
             except Exception as exc:
-                candidate["error"] = str(exc)
+                candidate["id_error"] = str(exc)
                 graph_info["candidate_spaces"].append(candidate)
+                continue
+
+            for label, ref in [
+                ("reference", node_material_ref),
+                ("wrapper", wrapper_node_material),
+            ]:
+                if ref is None:
+                    continue
+
+                try:
+                    candidate[f"{label}_has_space_string"] = bool(ref.HasSpace(space_id))
+                except Exception as exc:
+                    candidate[f"{label}_has_space_string_error"] = str(exc)
+
+                try:
+                    candidate[f"{label}_has_space_id"] = bool(ref.HasSpace(maxon_space))
+                except Exception as exc:
+                    candidate[f"{label}_has_space_id_error"] = str(exc)
+
+                for graph_mode, graph_arg in [("string", space_id), ("id", maxon_space)]:
+                    try:
+                        graph = ref.GetGraph(graph_arg)
+                        candidate[f"{label}_graph_{graph_mode}"] = graph is not None
+                        if graph is None:
+                            continue
+
+                        root = graph.GetRoot()
+                        nodes = self._summarize_graph_nodes(graph)
+                        candidate[f"{label}_graph_{graph_mode}_node_count"] = len(nodes)
+                        candidate[f"{label}_graph_{graph_mode}_nodes"] = nodes
+                        candidate[f"{label}_graph_{graph_mode}_root"] = (
+                            repr(root) if root else None
+                        )
+
+                        graph_info["candidate_spaces"].append(candidate)
+                        graph_info["accessible"] = True
+                        graph_info["selected_space"] = space_id
+                        graph_info["selected_probe"] = f"{label}:{graph_mode}"
+                        graph_info["node_count"] = len(nodes)
+                        graph_info["nodes"] = nodes
+                        graph_info["root"] = repr(root) if root else None
+                        return graph_info
+                    except Exception as exc:
+                        candidate[f"{label}_graph_{graph_mode}_error"] = str(exc)
+
+            try:
+                nimbus_ref = mat.GetNimbusRef(space_id)
+                candidate["nimbus_ref"] = repr(nimbus_ref)
+                candidate["nimbus_ref_available"] = nimbus_ref is not None
+            except Exception as exc:
+                candidate["nimbus_ref_error"] = str(exc)
+
+            graph_info["candidate_spaces"].append(candidate)
 
         graph_info["reason"] = "No accessible Redshift node space found"
         return graph_info
@@ -5454,6 +5556,7 @@ class C4DSocketServer(threading.Thread):
                 "name": mat.GetName(),
                 "type_id": mat.GetType(),
                 "redshift_like": True,
+                "shader_network_type_match": bool(mat.CheckType(1036224)),
             }
 
             if include_preview:
@@ -5499,6 +5602,7 @@ class C4DSocketServer(threading.Thread):
                 "redshift_material_id": getattr(c4d, "ID_REDSHIFT_MATERIAL", None),
                 "preview_sampling": True,
                 "graph_inspection_requested": include_graph,
+                "renderengine_style_probe": True,
             },
             "materials": inspected_materials,
             "skipped_materials": skipped_materials,

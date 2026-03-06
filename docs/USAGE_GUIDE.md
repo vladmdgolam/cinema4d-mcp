@@ -151,6 +151,8 @@ Best practices:
 
 Use `inspect_redshift_materials` as the first-stop diagnostic tool for RS scenes. It is read-only and reports what Cinema 4D can see without assuming the Redshift Python runtime is loaded.
 
+The current inspector also performs a renderEngine-style node-material probe: it checks the active node space, `GetNodeMaterialReference()`, `c4d.NodeMaterial(...)`, `GetNimbusRef(...)`, and candidate node spaces before concluding that graph access is unavailable.
+
 ### Accessible Without Redshift Runtime
 
 | Data | Status | Notes |
@@ -169,12 +171,12 @@ Use `inspect_redshift_materials` as the first-stop diagnostic tool for RS scenes
 
 | Data | Status | Notes |
 |---|---|---|
-| RS node graph internals | Unavailable | Node connections not accessible |
+| RS node graph internals | Usually unavailable | Newer true node materials may expose graph data; legacy RS shader-network materials still often fail with `Invalid Space` |
 | RS-specific lights/environment | Unavailable | Opaque without RS runtime |
 | RS-specific API IDs/ports | Unavailable | May fail to resolve |
 | True RS render output | Unavailable | Requires proper RS config |
 
-Even when the runtime is missing, the inspector can still tell you whether graph access was attempted, which node spaces were probed, and why access failed.
+Even when the runtime is missing, the inspector can still tell you whether graph access was attempted, which node spaces were probed, whether `GetNimbusRef(...)` returned anything, and why access failed.
 
 ## Raw Socket Fallback
 
