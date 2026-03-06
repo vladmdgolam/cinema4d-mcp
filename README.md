@@ -230,6 +230,7 @@ cinema4d-mcp/
 
 ### Redshift Support
 
+- `inspect_redshift_materials`: Read-only Redshift inspector with fallbacks for assignments, preview colors, readable params, and best-effort graph access. ✅
 - `validate_redshift_materials`: Check Redshift material setup and connections. ✅ ⚠️ (Redshift materials not fully implemented)
 
 ### MoGraph & Fields

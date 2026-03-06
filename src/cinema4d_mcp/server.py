@@ -583,6 +583,56 @@ async def apply_material(material_name: str, object_name: str, ctx: Context) -> 
 
 
 @mcp.tool()
+async def inspect_redshift_materials(
+    material_name: Optional[str] = None,
+    include_assignments: bool = True,
+    include_preview: bool = True,
+    include_description: bool = True,
+    include_container: bool = True,
+    include_graph: bool = True,
+    ctx: Context = None,
+) -> str:
+    """
+    Inspect Redshift materials with best-effort fallbacks.
+
+    This tool is read-only and is designed to be useful even when the Redshift
+    Python runtime is unavailable. It can still report names, assignments,
+    preview-derived colors, readable description/container fields, and will
+    attempt graph inspection only when Cinema 4D exposes that data.
+
+    Args:
+        material_name: Optional material name filter
+        include_assignments: Include texture-tag assignments in the scene
+        include_preview: Include sampled preview bitmap color data
+        include_description: Include readable description entries
+        include_container: Include safe BaseContainer values
+        include_graph: Attempt node-graph inspection when available
+    """
+    async with c4d_connection_context() as connection:
+        if not connection.connected:
+            return "❌ Not connected to Cinema 4D"
+
+        command = {
+            "command": "inspect_redshift_materials",
+            "include_assignments": include_assignments,
+            "include_preview": include_preview,
+            "include_description": include_description,
+            "include_container": include_container,
+            "include_graph": include_graph,
+        }
+
+        if material_name:
+            command["material_name"] = material_name
+
+        response = send_to_c4d(connection, command)
+
+        if "error" in response:
+            return f"❌ Error: {response['error']}"
+
+        return json.dumps(response, indent=2)
+
+
+@mcp.tool()
 async def render_frame(
     output_path: Optional[str] = None,
     width: Optional[int] = None,

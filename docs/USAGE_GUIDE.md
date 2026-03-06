@@ -149,6 +149,8 @@ Best practices:
 
 ## Redshift Availability
 
+Use `inspect_redshift_materials` as the first-stop diagnostic tool for RS scenes. It is read-only and reports what Cinema 4D can see without assuming the Redshift Python runtime is loaded.
+
 ### Accessible Without Redshift Runtime
 
 | Data | Status | Notes |
@@ -159,6 +161,9 @@ Best practices:
 | MoGraph clone transforms | Available | Via `GeGetMoData` |
 | C4D native shader params | Available | Standard C4D APIs |
 | Some wrapped RS material params | Partial | Depends on plugin implementation |
+| RS material assignments | Available | Via `Ttexture` tags |
+| RS preview-derived colors | Available | Sampled from `mat.GetPreview()` |
+| RS description/container metadata | Partial | Readable values only; opaque plugin data stays opaque |
 
 ### Requires Redshift Runtime
 
@@ -168,6 +173,8 @@ Best practices:
 | RS-specific lights/environment | Unavailable | Opaque without RS runtime |
 | RS-specific API IDs/ports | Unavailable | May fail to resolve |
 | True RS render output | Unavailable | Requires proper RS config |
+
+Even when the runtime is missing, the inspector can still tell you whether graph access was attempted, which node spaces were probed, and why access failed.
 
 ## Raw Socket Fallback
 
