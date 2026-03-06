@@ -242,7 +242,8 @@ cinema4d-mcp/
 
 ### Redshift Support
 
-- `inspect_redshift_materials`: Read-only Redshift inspector with fallbacks for assignments, preview colors, readable params, and a renderEngine-style node-material probe (`GetNodeMaterialReference`, `GetNimbusRef`, candidate node spaces). ✅
+- `inspect_redshift_materials`: Read-only Redshift inspector with fallbacks for assignments, preview colors, readable params, a renderEngine-style node-material probe, and a Redshift GraphView fallback via `redshift.GetRSMaterialNodeMaster(...)`. ✅
+  Known quirk: the top-level `capabilities.redshift_module_available` flag can still be `false` on some builds even when the per-material GraphView fallback succeeds. Treat each material's `graph.backend` and `graph.graphview.redshift_module_imported` as the authoritative signal.
 - `validate_redshift_materials`: Check Redshift material setup and connections. ✅ ⚠️ (Redshift materials not fully implemented)
 
 ### MoGraph & Fields

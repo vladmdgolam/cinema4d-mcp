@@ -5378,11 +5378,12 @@ class C4DSocketServer(threading.Thread):
 
         return node_entries
 
-    def _inspect_redshift_graph(self, mat):
-        """Try to inspect the Redshift node graph using renderEngine-style probes."""
+    def _inspect_redshift_nodespace_graph(self, mat):
+        """Try to inspect the Redshift node graph via the Maxon node-space API."""
         graph_info = {
             "accessible": False,
             "candidate_spaces": [],
+            "backend": "nodespace",
             "probe_strategy": "renderengine-style-node-material-reference",
             "shader_network_type_match": bool(mat.CheckType(1036224)),
         }
@@ -5508,6 +5509,279 @@ class C4DSocketServer(threading.Thread):
         graph_info["reason"] = "No accessible Redshift node space found"
         return graph_info
 
+    def _collect_graphview_port_entries(self, node):
+        """Collect GraphView port metadata and connected destination ports."""
+        port_entries = []
+        outgoing_connections = []
+
+        for direction, getter in [("input", node.GetInPorts), ("output", node.GetOutPorts)]:
+            try:
+                ports = list(getter())
+            except Exception:
+                ports = []
+
+            for port in ports:
+                entry = {
+                    "direction": direction,
+                }
+
+                try:
+                    entry["name"] = port.GetName(node)
+                except Exception as exc:
+                    entry["name_error"] = str(exc)
+
+                try:
+                    entry["main_id"] = int(port.GetMainID())
+                except Exception as exc:
+                    entry["main_id_error"] = str(exc)
+
+                try:
+                    entry["sub_id"] = int(port.GetSubID())
+                except Exception as exc:
+                    entry["sub_id_error"] = str(exc)
+
+                try:
+                    entry["connection_count"] = int(port.GetNrOfConnections())
+                except Exception:
+                    entry["connection_count"] = 0
+
+                if direction == "output":
+                    try:
+                        destination_ports = list(port.GetDestination())
+                    except Exception as exc:
+                        destination_ports = []
+                        entry["destination_error"] = str(exc)
+
+                    if destination_ports:
+                        entry["destination_count"] = len(destination_ports)
+                        outgoing_connections.append(
+                            {
+                                "from_node": node.GetName(),
+                                "from_port": entry.get("name"),
+                                "from_main_id": entry.get("main_id"),
+                                "from_sub_id": entry.get("sub_id"),
+                                "destination_ports": destination_ports,
+                            }
+                        )
+
+                port_entries.append(entry)
+
+        return port_entries, outgoing_connections
+
+    def _inspect_redshift_graphview_graph(self, mat, max_nodes=50, max_connections=200):
+        """Inspect Redshift shader graphs via the legacy GraphView API when available."""
+        graph_info = {
+            "accessible": False,
+            "backend": "redshift_graphview",
+        }
+
+        try:
+            import redshift
+        except Exception as exc:
+            graph_info["reason"] = f"redshift import failed: {exc}"
+            return graph_info
+
+        graph_info["redshift_module_imported"] = True
+
+        try:
+            graph_info["is_instance_mrsmaterial"] = bool(
+                mat.IsInstanceOf(redshift.Mrsmaterial)
+            )
+        except Exception as exc:
+            graph_info["is_instance_mrsmaterial_error"] = str(exc)
+
+        try:
+            node_master = redshift.GetRSMaterialNodeMaster(mat)
+        except Exception as exc:
+            graph_info["reason"] = f"GetRSMaterialNodeMaster failed: {exc}"
+            return graph_info
+
+        if node_master is None:
+            graph_info["reason"] = "GetRSMaterialNodeMaster returned None"
+            return graph_info
+
+        graph_info["node_master"] = repr(node_master)
+
+        try:
+            root = node_master.GetRoot()
+        except Exception as exc:
+            graph_info["reason"] = f"GvNodeMaster.GetRoot failed: {exc}"
+            return graph_info
+
+        if root is None:
+            graph_info["reason"] = "GraphView root node is missing"
+            return graph_info
+
+        graph_info["root"] = {
+            "name": root.GetName(),
+            "operator_id": int(root.GetOperatorID()),
+        }
+
+        nodes = []
+        outgoing_connections = []
+        stack = [(root, 0)]
+        nodes_truncated = False
+
+        while stack:
+            node, depth = stack.pop()
+            if node is None:
+                continue
+
+            next_node = node.GetNext()
+            if next_node is not None:
+                stack.append((next_node, depth))
+
+            child = node.GetDown()
+            if child is not None:
+                stack.append((child, depth + 1))
+
+            if len(nodes) >= max_nodes:
+                nodes_truncated = True
+                continue
+
+            node_entry = {
+                "name": node.GetName(),
+                "operator_id": int(node.GetOperatorID()),
+                "depth": depth,
+            }
+
+            try:
+                meta_class = node[c4d.GV_REDSHIFT_SHADER_META_CLASSNAME]
+                if meta_class:
+                    node_entry["meta_class"] = str(meta_class)
+            except Exception:
+                pass
+
+            port_entries, node_connections = self._collect_graphview_port_entries(node)
+            if port_entries:
+                displayed_ports = port_entries
+                if len(displayed_ports) > 8:
+                    connected_ports = [
+                        port
+                        for port in displayed_ports
+                        if port.get("connection_count", 0) > 0
+                    ]
+                    if connected_ports:
+                        displayed_ports = connected_ports[:8]
+                    else:
+                        displayed_ports = displayed_ports[:8]
+
+                    hidden_count = len(port_entries) - len(displayed_ports)
+                    if hidden_count > 0:
+                        node_entry["hidden_port_count"] = hidden_count
+
+                node_entry["ports"] = displayed_ports
+
+            outgoing_connections.extend(node_connections)
+            nodes.append(node_entry)
+
+        connections = []
+        connections_truncated = False
+        for connection in outgoing_connections:
+            for destination_port in connection["destination_ports"]:
+                if len(connections) >= max_connections:
+                    connections_truncated = True
+                    break
+
+                record = {
+                    "from_node": connection["from_node"],
+                    "from_port": connection.get("from_port"),
+                }
+
+                if connection.get("from_main_id") is not None:
+                    record["from_main_id"] = connection["from_main_id"]
+                if connection.get("from_sub_id") is not None:
+                    record["from_sub_id"] = connection["from_sub_id"]
+
+                destination_node = None
+                try:
+                    destination_node = destination_port.GetNode()
+                except Exception:
+                    destination_node = None
+
+                if destination_node is not None:
+                    try:
+                        record["to_node"] = destination_node.GetName()
+                    except Exception:
+                        pass
+
+                    try:
+                        record["to_port"] = destination_port.GetName(destination_node)
+                    except Exception:
+                        pass
+
+                try:
+                    record["to_main_id"] = int(destination_port.GetMainID())
+                except Exception:
+                    pass
+
+                try:
+                    record["to_sub_id"] = int(destination_port.GetSubID())
+                except Exception:
+                    pass
+
+                if "to_node" not in record:
+                    record["destination_ref"] = repr(destination_port)
+
+                connections.append(record)
+
+            if connections_truncated:
+                break
+
+        graph_info["accessible"] = True
+        graph_info["node_count"] = len(nodes)
+        graph_info["nodes"] = nodes
+        graph_info["connection_count"] = len(connections)
+        graph_info["connections"] = connections
+        if nodes_truncated:
+            graph_info["nodes_truncated"] = True
+        if connections_truncated:
+            graph_info["connections_truncated"] = True
+
+        return graph_info
+
+    def _inspect_redshift_graph(self, mat):
+        """Inspect the Redshift graph through node-space and GraphView backends."""
+        nodespace_info = self._inspect_redshift_nodespace_graph(mat)
+        graph_info = dict(nodespace_info)
+        graph_info["backend_attempts"] = ["nodespace"]
+
+        if nodespace_info.get("accessible"):
+            return graph_info
+
+        graph_info["nodespace"] = {
+            "accessible": nodespace_info.get("accessible", False),
+            "reason": nodespace_info.get("reason"),
+            "candidate_spaces": nodespace_info.get("candidate_spaces", []),
+        }
+
+        graphview_info = self._inspect_redshift_graphview_graph(mat)
+        graph_info["backend_attempts"].append("redshift_graphview")
+        graph_info["graphview"] = graphview_info
+
+        if graphview_info.get("accessible"):
+            graph_info["accessible"] = True
+            graph_info["backend"] = "redshift_graphview"
+            graph_info["selected_probe"] = "redshift_graphview"
+            graph_info["reason"] = "GraphView fallback succeeded after nodespace probe failed"
+            graph_info["node_count"] = graphview_info.get("node_count", 0)
+            graph_info["nodes"] = graphview_info.get("nodes", [])
+            graph_info["connection_count"] = graphview_info.get("connection_count", 0)
+            graph_info["connections"] = graphview_info.get("connections", [])
+            graph_info["root"] = graphview_info.get("root")
+            graph_info["node_master"] = graphview_info.get("node_master")
+            if graphview_info.get("nodes_truncated"):
+                graph_info["nodes_truncated"] = True
+            if graphview_info.get("connections_truncated"):
+                graph_info["connections_truncated"] = True
+            return graph_info
+
+        graph_info["backend"] = "nodespace"
+        graph_info["reason"] = (
+            "No accessible Redshift node graph found via nodespace or GraphView"
+        )
+        return graph_info
+
     def handle_inspect_redshift_materials(self, command):
         """Inspect Redshift-like materials with runtime-safe fallbacks."""
         doc = c4d.documents.GetActiveDocument()
@@ -5603,6 +5877,7 @@ class C4DSocketServer(threading.Thread):
                 "preview_sampling": True,
                 "graph_inspection_requested": include_graph,
                 "renderengine_style_probe": True,
+                "redshift_graphview_probe": True,
             },
             "materials": inspected_materials,
             "skipped_materials": skipped_materials,

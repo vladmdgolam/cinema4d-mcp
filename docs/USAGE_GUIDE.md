@@ -151,7 +151,9 @@ Best practices:
 
 Use `inspect_redshift_materials` as the first-stop diagnostic tool for RS scenes. It is read-only and reports what Cinema 4D can see without assuming the Redshift Python runtime is loaded.
 
-The current inspector also performs a renderEngine-style node-material probe: it checks the active node space, `GetNodeMaterialReference()`, `c4d.NodeMaterial(...)`, `GetNimbusRef(...)`, and candidate node spaces before concluding that graph access is unavailable.
+The current inspector first performs a renderEngine-style node-material probe: it checks the active node space, `GetNodeMaterialReference()`, `c4d.NodeMaterial(...)`, `GetNimbusRef(...)`, and candidate node spaces. If that still fails but the Redshift Python runtime is available, it falls back to the legacy GraphView backend via `redshift.GetRSMaterialNodeMaster(...)`.
+
+Known quirk: the top-level `capabilities.redshift_module_available` field is currently conservative and can still report `false` even when a material-level GraphView fallback succeeds. For live Redshift graph access, trust the per-material fields instead: `graph.backend`, `graph.selected_probe`, and `graph.graphview.redshift_module_imported`.
 
 ### Accessible Without Redshift Runtime
 
@@ -166,17 +168,20 @@ The current inspector also performs a renderEngine-style node-material probe: it
 | RS material assignments | Available | Via `Ttexture` tags |
 | RS preview-derived colors | Available | Sampled from `mat.GetPreview()` |
 | RS description/container metadata | Partial | Readable values only; opaque plugin data stays opaque |
+| RS GraphView topology | Available with RS runtime | Legacy RS shader-network materials can often be inspected via `GetRSMaterialNodeMaster(...)` even when node-space graph access says `Invalid Space` |
 
 ### Requires Redshift Runtime
 
 | Data | Status | Notes |
 |---|---|---|
-| RS node graph internals | Usually unavailable | Newer true node materials may expose graph data; legacy RS shader-network materials still often fail with `Invalid Space` |
+| RS node graph internals | Partial | True node materials may expose a node-space graph; legacy RS shader-network materials may still fail there but work through Redshift GraphView when the runtime is loaded |
 | RS-specific lights/environment | Unavailable | Opaque without RS runtime |
 | RS-specific API IDs/ports | Unavailable | May fail to resolve |
 | True RS render output | Unavailable | Requires proper RS config |
 
-Even when the runtime is missing, the inspector can still tell you whether graph access was attempted, which node spaces were probed, whether `GetNimbusRef(...)` returned anything, and why access failed.
+Even when the runtime is missing, the inspector can still tell you whether graph access was attempted, which node spaces were probed, whether `GetNimbusRef(...)` returned anything, and why access failed. When the runtime is present, the response also tells you whether the usable backend was `nodespace` or `redshift_graphview`.
+
+If those two levels disagree, prefer the per-material graph result over the top-level capability flag. In practice, `redshift_module_available` is best read as a rough environment hint, not a definitive statement about GraphView reachability.
 
 ## Raw Socket Fallback
 
